@@ -40,8 +40,9 @@ public class Emulator {
     private static final int FPS    = 60;
     private static final int CYCLES_PER_FRAME = CPU_HZ / FPS;
     private static final int CYCLES_HALF      = CYCLES_PER_FRAME / 2;
-    // this is to compensate over cycles
-    private int cycleOveshoot = 0;
+    // cycles already executed past the previous frame boundary,
+    // counted towards the next frame so interrupts don't drift
+    private int cycleOvershoot = 0;
 
     private static final long NANO_ONE_SECOND = 1_000_000_000L / FPS;  // 16_666_666
     private long nextFrameTime = System.nanoTime();
@@ -87,13 +88,14 @@ public class Emulator {
 
     // timing fixes
     private void runFrame() {
-        int spent = runCycles(CYCLES_HALF - cycleOveshoot);
+        int spent = cycleOvershoot;
+        spent += runCycles(CYCLES_HALF - spent);
         cpu.requestInterrupt(0x08);
 
         spent += runCycles(CYCLES_PER_FRAME - spent);
         cpu.requestInterrupt(0x10);
 
-        cycleOveshoot = spent - CYCLES_PER_FRAME;
+        cycleOvershoot = spent - CYCLES_PER_FRAME;
     }
 
     private int runCycles(int budget) {
