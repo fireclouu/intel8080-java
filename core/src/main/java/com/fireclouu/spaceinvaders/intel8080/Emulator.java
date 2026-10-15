@@ -54,6 +54,21 @@ public class Emulator {
         this.programTimeEpoch = System.nanoTime();
 
         cyclePerSecond = 0;
+
+        // test suites intercept their own I/O in cycleWithoutTiming()
+        if (!platform.isFileTestSuite()) {
+            cpu.setIoHandler(new Cpu.IoHandler() {
+                @Override
+                public short in(int port) {
+                    return handleIn((short) port);
+                }
+
+                @Override
+                public void out(int port, short value) {
+                    handleOut((short) port, value);
+                }
+            });
+        }
     }
 
     public void tick() {
@@ -84,7 +99,6 @@ public class Emulator {
     private int runCycles(int budget) {
         int spent = 0;
         while (spent < budget) {
-            handleInOut();
             spent += cpu.step();
         }
         return spent;
@@ -172,23 +186,6 @@ public class Emulator {
         }
     }
 
-    private void handleInOut() {
-        int pc = cpu.getPC();
-        int opcode = mmu.readMemory(pc);
-        short nextByte = mmu.readMemory(pc + 1);
-
-        switch (opcode) {
-            case 0xd3: // out
-                handleOut(nextByte, cpu.getRegA());
-                cpu.setPC(pc + 2);
-                break;
-            case 0xdb: // in
-                cpu.setRegA(handleIn(nextByte));
-                cpu.setPC(pc + 2);
-                break;
-        }
-    }
-    
     public void cycle() {
         long currentTime = getRelativeTimeEpoch();
         long frameElapsedTime = currentTime - frameLastTime;
@@ -220,10 +217,6 @@ public class Emulator {
         do {
             catchupCount++;
             int cycle = cpu.step();
-
-            // io
-            handleInOut();
-
 
             // get next exec
             // nextTimeExecution = (NANO_ONE_SECOND - (getRelativeTimeEpoch() - cpuLastTime)) * cpu.currentCycle / (MAX_CYCLE_PER_SECOND - cyclePerSecond);

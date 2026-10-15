@@ -1,7 +1,13 @@
 package com.fireclouu.spaceinvaders.intel8080;
 
 public class Cpu {
+    public interface IoHandler {
+        short in(int port);
+        void out(int port, short value);
+    }
+
     private final Mmu mmu;
+    private IoHandler ioHandler;
 
     // SOURCES: superzazu
     private final static byte[] OPCODES_CYCLES = {    //  0   1   2   3   4   5   6   7   8   9   A   B   C   D   E   F
@@ -1197,11 +1203,13 @@ public class Cpu {
 
             // I/O
             case 0xd3:
+                if (ioHandler != null) ioHandler.out(mmu.readMemory(pc + 1), a);
                 pc += 2;
                 break; // OUT D8
             case 0xdb:
+                if (ioHandler != null) a = (short) (ioHandler.in(mmu.readMemory(pc + 1)) & 0xff);
                 pc += 2;
-                break; // IN D8 (stub) (Load I/O to Accumulator)
+                break; // IN D8 (Load I/O to Accumulator)
 
             // TERMINATE
             case 0x76:
@@ -1227,6 +1235,10 @@ public class Cpu {
 
         pc &= 0xffff;
         return cycles;
+    }
+
+    public void setIoHandler(IoHandler ioHandler) {
+        this.ioHandler = ioHandler;
     }
 
     /// INTERRUPT
