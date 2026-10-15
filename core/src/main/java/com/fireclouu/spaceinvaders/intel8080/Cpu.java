@@ -1179,28 +1179,28 @@ public class Cpu {
 
             // RST
             case 0xc7:
-                instr_call(0x00);
+                instr_rst(0x00);
                 break; // RST 0
             case 0xcf:
-                instr_call(0x08);
+                instr_rst(0x08);
                 break; // RST 1
             case 0xd7:
-                instr_call(0x10);
+                instr_rst(0x10);
                 break; // RST 2
             case 0xdf:
-                instr_call(0x18);
+                instr_rst(0x18);
                 break; // RST 3
             case 0xe7:
-                instr_call(0x20);
+                instr_rst(0x20);
                 break; // RST 4
             case 0xef:
-                instr_call(0x28);
+                instr_rst(0x28);
                 break; // RST 5
             case 0xf7:
-                instr_call(0x30);
+                instr_rst(0x30);
                 break; // RST 6
             case 0xff:
-                instr_call(0x38);
+                instr_rst(0x38);
                 break; // RST 7
 
             // INTERRUPTS
@@ -1368,6 +1368,14 @@ public class Cpu {
         mmu.writeMemory(sp - 2, (short) (nextAddress & 0xff));
         sp = (sp - 2) & 0xffff;
         instr_jmp(pc);
+    }
+
+    private void instr_rst(int vectorAddress) {
+        int nextAddress = pc + 1;
+        mmu.writeMemory(sp - 1, (short) ((nextAddress >> 8) & 0xff));
+        mmu.writeMemory(sp - 2, (short) (nextAddress & 0xff));
+        sp = (sp - 2) & 0xffff;
+        pc = vectorAddress;
     }
 
     private void instr_dad(int... var) {
