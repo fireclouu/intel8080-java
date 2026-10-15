@@ -1,19 +1,13 @@
 package com.fireclouu.intel8080emu;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.Paint;
 import android.os.Handler;
 import android.util.AttributeSet;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
-import com.fireclouu.spaceinvaders.intel8080.Guest;
-
-import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callback {
     static {
@@ -26,13 +20,20 @@ public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callbac
     // this is intended as space invaders original scan is 90deg rotated to right
     public static final int GUEST_WIDTH = 224;
     public static final int GUEST_HEIGHT = 256;
+    private static final int VRAM_SIZE = GUEST_WIDTH * GUEST_HEIGHT / 8;
 
     private int orientationWidth, orientationHeight;
     //    private SurfaceHolder holder;
     // written on the ui thread, read on the emulator thread
     private volatile Surface mSurface;
-    private Bitmap bitmap;
-    private Paint paint;
+
+    // latest vram written by the emulator thread, guarded by itself
+    private final byte[] frameVram = new byte[VRAM_SIZE];
+    // copy handed to native on the ui thread
+    private final byte[] renderVram = new byte[VRAM_SIZE];
+    // at most one render queued, so a slow ui thread drops frames instead of piling them up
+    private final AtomicBoolean isRenderQueued = new AtomicBoolean(false);
+    private final Runnable renderRunnable = this::render;
 
     private Handler handler;
 
@@ -75,12 +76,8 @@ public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callbac
         handler = new Handler();
         getHolder().addCallback(this);
 
-        // this is intended, due to original game is rotated 90deg to right
-        bitmap = Bitmap.createBitmap(GUEST_WIDTH, GUEST_HEIGHT, Bitmap.Config.ARGB_8888);
-
-        paint = new Paint();
-        paint.setColor(Color.WHITE);
-        paint.setTextSize(5.0f);
+        orientationWidth = GUEST_WIDTH;
+        orientationHeight = GUEST_HEIGHT;
     }
 
     public int getHostMaxDimension() {
@@ -96,53 +93,33 @@ public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callbac
         return getHostScalingValue(maxDimension);
     }
 
-    private void createGraphicsBitmapRotated(short[] memoryVideoRam) {
-        int x = 0;
-        int y = 31;
-        for (int data : memoryVideoRam) {
-            for (int bit = 0; bit < 8; bit++) {
-                boolean isPixelOn = ((data >> bit) & 1) == 1;
-                if (!isPixelOn) continue;
-
-                // change color based on y region
-                int color;
-                if (y < 8) {
-                    color = Color.parseColor(Guest.Display.COLOR_TOP);
-                } else if (y < 24) {
-                    color = Color.parseColor(Guest.Display.COLOR_MIDDLE);
-                } else {
-                    color = Color.parseColor(Guest.Display.COLOR_BELOW);
-                }
-                bitmap.setPixel(x, (y * 8) - bit, color);
-            }
-            y--;
-            if (y < 0) {
-                y = 31;
-                x++;
-            }
-        }
-    }
-
     public void draw(short[] memoryVideoRam) {
         // emulation starts on activity create, the surface only exists once the view is laid out
         final Surface surface = mSurface;
         if (surface == null || !surface.isValid()) return;
 
-        orientationWidth = GUEST_WIDTH;
-        orientationHeight = GUEST_HEIGHT;
-        bitmap.eraseColor(Color.TRANSPARENT);
-        createGraphicsBitmapRotated(memoryVideoRam);
+        synchronized (frameVram) {
+            for (int i = 0; i < VRAM_SIZE; i++) {
+                frameVram[i] = (byte) memoryVideoRam[i];
+            }
+        }
 
-        ByteBuffer buffer = ByteBuffer.allocateDirect(bitmap.getByteCount());
-        bitmap.copyPixelsToBuffer(buffer);
+        if (isRenderQueued.compareAndSet(false, true)) {
+            handler.post(renderRunnable);
+        }
+    }
 
-        Runnable runnable = () -> {
-            if (mSurface != null && mSurface.isValid()) nativeMainLoopStep(buffer, bitmap.getWidth(), bitmap.getHeight(), getScaleValueLogical());
-        };
-        handler.post(runnable);
+    private void render() {
+        isRenderQueued.set(false);
+        if (mSurface == null || !mSurface.isValid()) return;
+
+        synchronized (frameVram) {
+            System.arraycopy(frameVram, 0, renderVram, 0, VRAM_SIZE);
+        }
+        nativeMainLoopStep(renderVram, getScaleValueLogical());
     }
 
     public native int nativeInit(Surface surface);
-    public native void nativeMainLoopStep(ByteBuffer buffer, int width, int height, float scale);
+    public native void nativeMainLoopStep(byte[] memoryVideoRam, float scale);
     public native void nativeShutdown();
 }

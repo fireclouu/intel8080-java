@@ -19,8 +19,18 @@
 
 #include <android/native_window_jni.h>
 
+// Guest display, stored rotated 90deg left like the original cabinet
+static const int            GUEST_WIDTH = 224;
+static const int            GUEST_HEIGHT = 256;
+static const int            VRAM_SIZE = GUEST_WIDTH * GUEST_HEIGHT / 8;
+static const ImU32          COLOR_TOP = IM_COL32(0xFF, 0x1E, 0x00, 0xFF);
+static const ImU32          COLOR_MIDDLE = IM_COL32(0xE8, 0xF9, 0xFD, 0xFF);
+static const ImU32          COLOR_BELOW = IM_COL32(0x59, 0xCE, 0x8F, 0xFF);
+static const ImU32          COLOR_BACKGROUND = IM_COL32(0x00, 0x00, 0x00, 0x00);
+
 // Data
-GLuint textureId = 0;
+static GLuint               g_TextureId = 0;
+static ImU32                g_Pixels[GUEST_WIDTH * GUEST_HEIGHT];
 
 static EGLDisplay           g_EglDisplay = EGL_NO_DISPLAY;
 static EGLSurface           g_EglSurface = EGL_NO_SURFACE;
@@ -42,7 +52,7 @@ ImVec2 displaySize;
 static void Init(struct android_app* app);
 static void Shutdown();
 static void RenderLogsViaImGui();
-static void MainLoopStep();
+static void MainLoopStep(float scale);
 static int ShowSoftKeyboardInput();
 static int PollUnicodeChars();
 static int GetAssetData(const char* filename, void** out_data);
@@ -185,7 +195,40 @@ void Init(struct android_app* app)
     g_Initialized = true;
 }
 
-void MainLoopStep(int width, int height, float scale)
+// The texture lives as long as the GL context, it is only re-uploaded per frame
+static void UploadFrame(const uint8_t* vram)
+{
+    // vram is 224 scanlines of 32 bytes, lsb first; scanline -> column, bit -> row from the bottom
+    for (int i = 0; i < VRAM_SIZE; i++)
+    {
+        int x = i / 32;
+        int y = 31 - (i % 32);
+        ImU32 color = y < 8 ? COLOR_TOP : (y < 24 ? COLOR_MIDDLE : COLOR_BELOW);
+        uint8_t data = vram[i];
+        for (int bit = 0; bit < 8; bit++)
+        {
+            int row = (y * 8) + (7 - bit);
+            g_Pixels[(row * GUEST_WIDTH) + x] = ((data >> bit) & 1) ? color : COLOR_BACKGROUND;
+        }
+    }
+
+    if (g_TextureId == 0)
+    {
+        glGenTextures(1, &g_TextureId);
+        glBindTexture(GL_TEXTURE_2D, g_TextureId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, GUEST_WIDTH, GUEST_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, g_Pixels);
+    }
+    else
+    {
+        glBindTexture(GL_TEXTURE_2D, g_TextureId);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GUEST_WIDTH, GUEST_HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, g_Pixels);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void MainLoopStep(float scale)
 {
     ImGuiIO& io = ImGui::GetIO();
     if (g_EglDisplay == EGL_NO_DISPLAY)
@@ -213,7 +256,7 @@ void MainLoopStep(int width, int height, float scale)
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(displaySize);
     ImGui::Begin("MainWindow", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar);
-    ImGui::Image((ImTextureID)(intptr_t)textureId, ImVec2(width * scale, height * scale));
+    ImGui::Image((ImTextureID)(intptr_t)g_TextureId, ImVec2(GUEST_WIDTH * scale, GUEST_HEIGHT * scale));
     ImGui::End();
 
     // Logs
@@ -233,6 +276,11 @@ void Shutdown()
         return;
 
     // Cleanup
+    if (g_TextureId != 0)
+    {
+        glDeleteTextures(1, &g_TextureId);
+        g_TextureId = 0;
+    }
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplAndroid_Shutdown();
     ImGui::DestroyContext();
@@ -386,6 +434,8 @@ static int GetAssetData(const char* filename, void** outData)
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_fireclouu_intel8080emu_DisplaySurface_nativeInit(JNIEnv *env, jobject thiz, jobject surface) {
+    // surfaceChanged() calls this again, don't leak another app/window reference
+    if (g_Initialized) return 0;
     auto *pseudoApp = new android_app();
     g_App = pseudoApp;
     pseudoApp->window = ANativeWindow_fromSurface(env, surface);
@@ -395,21 +445,14 @@ Java_com_fireclouu_intel8080emu_DisplaySurface_nativeInit(JNIEnv *env, jobject t
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_fireclouu_intel8080emu_DisplaySurface_nativeMainLoopStep(JNIEnv *env, jobject thiz, jobject byteBuffer, jint width, jint height, jfloat scale) {
-    auto* pixels = (uint8_t*) env->GetDirectBufferAddress(byteBuffer);
-    if (pixels) {
-        glGenTextures(1, &textureId);
-        glBindTexture(GL_TEXTURE_2D, textureId);
+Java_com_fireclouu_intel8080emu_DisplaySurface_nativeMainLoopStep(JNIEnv *env, jobject thiz, jbyteArray memoryVideoRam, jfloat scale) {
+    if (!g_Initialized) return;
+    if (env->GetArrayLength(memoryVideoRam) < VRAM_SIZE) return;
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-    MainLoopStep(width, height, scale);
+    static uint8_t vram[VRAM_SIZE];
+    env->GetByteArrayRegion(memoryVideoRam, 0, VRAM_SIZE, (jbyte*) vram);
+    UploadFrame(vram);
+    MainLoopStep(scale);
 }
 
 extern "C"
