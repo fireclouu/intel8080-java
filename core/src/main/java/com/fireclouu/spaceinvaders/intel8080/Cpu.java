@@ -36,6 +36,10 @@ public class Cpu {
     private int pc, sp;
     ///  INTERRUPT  ///
     private boolean hasInterrupt;
+    // EI only takes effect after the instruction that follows it
+    private boolean isEiDelay;
+    // requested RST vector, held until interrupts are enabled; -1 if none
+    private int pendingInterrupt;
 
     // flag positions
     private final short PSW_FLAG_POS_CY = 0b00000001; // 1
@@ -63,10 +67,18 @@ public class Cpu {
         sp = 0;
 
         hasInterrupt = false;
+        isEiDelay = false;
+        pendingInterrupt = -1;
         cc.init();
     }
 
     public byte step() {
+        if (pendingInterrupt >= 0 && hasInterrupt && !isEiDelay) {
+            serviceInterrupt();
+            return 11; // same as RST
+        }
+        isEiDelay = false;
+
         int opcode = mmu.readMemory(pc);
         byte cycles = OPCODES_CYCLES[opcode];
 
@@ -1198,6 +1210,7 @@ public class Cpu {
                 break; // DI
             case 0xfb:
                 hasInterrupt = true;
+                isEiDelay = true;
                 pc++;
                 break; // EI
 
@@ -1243,8 +1256,13 @@ public class Cpu {
 
     /// INTERRUPT
     public void requestInterrupt(int vectorAddress) {
-        // control INTE here
-        if (!hasInterrupt) return;
+        // latched, serviced on the next step() once INTE allows it
+        pendingInterrupt = vectorAddress;
+    }
+
+    private void serviceInterrupt() {
+        int vectorAddress = pendingInterrupt;
+        pendingInterrupt = -1;
         mmu.writeMemory(sp - 1, (short) ((pc & 0xff00) >> 8));
         mmu.writeMemory(sp - 2, (short) (pc & 0xff));
         sp = (sp - 2) & 0xffff;
