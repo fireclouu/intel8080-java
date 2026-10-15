@@ -9,6 +9,7 @@
 #include "imgui.h"
 #include "imgui_impl_android.h"
 #include "imgui_impl_opengl3.h"
+#include "imgui_memory_editor.h"
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <android/asset_manager.h>
@@ -46,6 +47,9 @@ static uint16_t              int_bc = 0;
 static uint16_t              int_de = 0;
 static uint16_t              int_hl = 0;
 static uint8_t               int_a = 0;
+// guest address space snapshot, written from the emulator thread; a torn read only shows stale bytes
+static uint8_t              g_MemoryView[0x10000];
+static MemoryEditor         g_MemoryEditor;
 ImVec2 displaySize;
 
 // Forward declarations of helper functions
@@ -343,6 +347,12 @@ void RenderLogsViaImGui() {
     ImGui::Text("- fireclouu");
 
     ImGui::End();
+
+    // Hex view of the program being run, current pc highlighted
+    g_MemoryEditor.ReadOnly = true;
+    g_MemoryEditor.HighlightMin = int_pc;
+    g_MemoryEditor.HighlightMax = int_pc + 1;
+    g_MemoryEditor.DrawWindow("Hex View | memory", g_MemoryView, sizeof(g_MemoryView));
 }
 // Helper functions
 
@@ -476,4 +486,12 @@ extern "C"
 JNIEXPORT void JNICALL
 Java_com_fireclouu_intel8080emu_AndroidPlatform_nativeSetDebugging(JNIEnv *env, jobject thiz, jboolean debugging) {
     g_Debugging = debugging;
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_fireclouu_intel8080emu_AndroidPlatform_nativeSetMemoryView(JNIEnv *env, jobject thiz, jbyteArray memory) {
+    jsize length = env->GetArrayLength(memory);
+    if (length > (jsize) sizeof(g_MemoryView)) length = sizeof(g_MemoryView);
+    env->GetByteArrayRegion(memory, 0, length, (jbyte*) g_MemoryView);
 }

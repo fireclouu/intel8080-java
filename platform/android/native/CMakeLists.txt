@@ -29,6 +29,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/imgui
   ${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/imgui/backends
+  ${CMAKE_CURRENT_SOURCE_DIR}/../../../vendor/imgui_club/imgui_memory_editor
   ${ANDROID_NDK}/sources/android/native_app_glue
 )
 

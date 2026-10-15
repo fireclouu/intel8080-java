@@ -178,6 +178,10 @@ public abstract class Platform {
         return emulator.getCpu();
     }
 
+    public Mmu getMmu() {
+        return guest.getMmu();
+    }
+
     public String getfilePath() {
         return filePath;
     }

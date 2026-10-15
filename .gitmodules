@@ -1,3 +1,6 @@
 [submodule "libs/imgui"]
 	path = vendor/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "vendor/imgui_club"]
+	path = vendor/imgui_club
+	url = https://github.com/ocornut/imgui_club.git

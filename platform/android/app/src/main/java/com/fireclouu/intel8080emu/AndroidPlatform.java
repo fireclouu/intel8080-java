@@ -16,6 +16,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import com.fireclouu.spaceinvaders.intel8080.Cpu;
+import com.fireclouu.spaceinvaders.intel8080.Mmu;
 import com.fireclouu.spaceinvaders.intel8080.Platform;
 
 import java.io.IOException;
@@ -32,6 +33,11 @@ public class AndroidPlatform extends Platform implements Serializable {
     private SoundPool soundPool;
     private TextView tvLog;
     private Handler handler;
+
+    // showDebug() runs every loop iteration, only snapshot memory at display rate
+    private static final long MEMORY_VIEW_INTERVAL = 1_000_000_000L / 60;
+    private final byte[] memoryView = new byte[0x10000];
+    private long nextMemoryViewTime = 0;
 
     static {
         System.loadLibrary("ImGui");
@@ -220,6 +226,16 @@ public class AndroidPlatform extends Platform implements Serializable {
         int hl = cpu.getRegH() << 8 | cpu.getRegL();
         int a = cpu.getRegA();
         nativeSetMemory(pc, sp, bc, de, hl, a);
+
+        long now = System.nanoTime();
+        if (now < nextMemoryViewTime) return;
+        nextMemoryViewTime = now + MEMORY_VIEW_INTERVAL;
+
+        Mmu mmu = getMmu();
+        for (int address = 0; address < memoryView.length; address++) {
+            memoryView[address] = (byte) mmu.readMemory(address);
+        }
+        nativeSetMemoryView(memoryView);
     }
 
     public void setDisplay(DisplaySurface DisplaySurface) {
@@ -238,4 +254,5 @@ public class AndroidPlatform extends Platform implements Serializable {
 
     public native void nativeSetMemory(int pc, int sp, int bc, int de, int hl, int a);
     public native void nativeSetDebugging(boolean debugging);
+    public native void nativeSetMemoryView(byte[] memory);
 }
