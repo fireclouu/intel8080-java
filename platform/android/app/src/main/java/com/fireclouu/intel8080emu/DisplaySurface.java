@@ -3,6 +3,7 @@ package com.fireclouu.intel8080emu;
 import android.content.Context;
 import android.os.Handler;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
@@ -93,6 +94,20 @@ public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callbac
         return getHostScalingValue(maxDimension);
     }
 
+    // same ui thread that renders, so it is safe to hand straight to imgui
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        int action = event.getActionMasked();
+        nativeTouchEvent(action, event.getX(), event.getY());
+        if (action == MotionEvent.ACTION_UP) performClick();
+        return true;
+    }
+
+    @Override
+    public boolean performClick() {
+        return super.performClick();
+    }
+
     public void draw(short[] memoryVideoRam) {
         // emulation starts on activity create, the surface only exists once the view is laid out
         final Surface surface = mSurface;
@@ -122,4 +137,5 @@ public class DisplaySurface extends SurfaceView implements SurfaceHolder.Callbac
     public native int nativeInit(Surface surface);
     public native void nativeMainLoopStep(byte[] memoryVideoRam, float scale);
     public native void nativeShutdown();
+    public native void nativeTouchEvent(int action, float x, float y);
 }

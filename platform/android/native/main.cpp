@@ -50,12 +50,14 @@ static uint8_t               int_a = 0;
 // guest address space snapshot, written from the emulator thread; a torn read only shows stale bytes
 static uint8_t              g_MemoryView[0x10000];
 static MemoryEditor         g_MemoryEditor;
+static bool                 g_FollowPc = true;
 ImVec2 displaySize;
 
 // Forward declarations of helper functions
 static void Init(struct android_app* app);
 static void Shutdown();
 static void RenderLogsViaImGui();
+static void RenderMemoryView();
 static void MainLoopStep(float scale);
 static int ShowSoftKeyboardInput();
 static int PollUnicodeChars();
@@ -348,11 +350,35 @@ void RenderLogsViaImGui() {
 
     ImGui::End();
 
-    // Hex view of the program being run, current pc highlighted
+    RenderMemoryView();
+}
+
+// Hex view of the program being run, current pc highlighted
+static void RenderMemoryView()
+{
     g_MemoryEditor.ReadOnly = true;
     g_MemoryEditor.HighlightMin = int_pc;
     g_MemoryEditor.HighlightMax = int_pc + 1;
-    g_MemoryEditor.DrawWindow("Hex View | memory", g_MemoryView, sizeof(g_MemoryView));
+
+    MemoryEditor::Sizes s;
+    g_MemoryEditor.CalcSizes(s, sizeof(g_MemoryView), 0x0000);
+    ImGui::SetNextWindowSize(ImVec2(s.WindowWidth, s.WindowWidth * 0.60f), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Hex View | memory", nullptr, ImGuiWindowFlags_NoScrollbar))
+    {
+        ImGui::Checkbox("Follow PC", &g_FollowPc);
+        g_MemoryEditor.DrawContents(g_MemoryView, sizeof(g_MemoryView));
+
+        // GotoAddrAndHighlight() would also grab focus every frame and fight touch input,
+        // so scroll the editor's child window directly, the same way it does internally
+        if (g_FollowPc)
+        {
+            ImGui::BeginChild("##scrolling");
+            float pcRowY = (float)(int_pc / g_MemoryEditor.Cols) * ImGui::GetTextLineHeight();
+            ImGui::SetScrollY(pcRowY - ImGui::GetWindowHeight() * 0.5f);
+            ImGui::EndChild();
+        }
+    }
+    ImGui::End();
 }
 // Helper functions
 
@@ -463,6 +489,27 @@ Java_com_fireclouu_intel8080emu_DisplaySurface_nativeMainLoopStep(JNIEnv *env, j
     env->GetByteArrayRegion(memoryVideoRam, 0, VRAM_SIZE, (jbyte*) vram);
     UploadFrame(vram);
     MainLoopStep(scale);
+}
+
+// The app runs a regular Activity, not android_main(), so touches arrive from DisplaySurface
+extern "C"
+JNIEXPORT void JNICALL
+Java_com_fireclouu_intel8080emu_DisplaySurface_nativeTouchEvent(JNIEnv *env, jobject thiz, jint action, jfloat x, jfloat y) {
+    if (!g_Initialized) return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+    io.AddMousePosEvent(x, y);
+    switch (action)
+    {
+        case AMOTION_EVENT_ACTION_DOWN:
+            io.AddMouseButtonEvent(0, true);
+            break;
+        case AMOTION_EVENT_ACTION_UP:
+        case AMOTION_EVENT_ACTION_CANCEL:
+            io.AddMouseButtonEvent(0, false);
+            break;
+    }
 }
 
 extern "C"
